@@ -7,7 +7,7 @@ on:
 
 env:
   APP_NAME: devopsshack-java-demo
-  PROJECT_DIR: Java-Monitoring-Project-main
+  PROJECT_DIR: Boardgame-main
 
 jobs:
   build:
@@ -63,8 +63,21 @@ jobs:
           name: compiled-classes
           path: Boardgame-main/target/classes
 
+      # TEMPORARY: remove once Sonar auth works
+      - name: Debug Sonar auth
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then echo "SONAR_TOKEN is EMPTY"; exit 1; fi
+          if [ -z "$SONAR_HOST_URL" ]; then echo "SONAR_HOST_URL is EMPTY"; exit 1; fi
+          echo "--- token check ---"
+          curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/authentication/validate"; echo
+          echo "--- project check ---"
+          curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/components/show?component=Boardgame"; echo
+
       - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@master   # pin to a release tag
+        uses: SonarSource/sonarqube-scan-action@v6
         with:
           projectBaseDir: Boardgame-main
         env:
@@ -73,7 +86,7 @@ jobs:
 
       - name: SonarQube Quality Gate check
         id: qg
-        uses: sonarsource/sonarqube-quality-gate-action@master   # pin to a release tag
+        uses: SonarSource/sonarqube-quality-gate-action@v1
         with:
           pollingTimeoutSec: 600
           scanMetadataReportFile: Boardgame-main/.scannerwork/report-task.txt
