@@ -1,4 +1,4 @@
-name: Java Monitoring project
+name: Java-project
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  APP_NAME: devopsshack-java-demo
+  APP_NAME: java-demo
   PROJECT_DIR: Boardgame-main
 
 jobs:
@@ -27,6 +27,8 @@ jobs:
           cache: maven
           cache-dependency-path: Boardgame-main/pom.xml
 
+      # Runs tests and creates the JaCoCo coverage report
+      # (needs <phase>test</phase> on the jacoco report goal in pom.xml)
       - name: Test
         run: mvn -B test
 
@@ -40,11 +42,14 @@ jobs:
           path: Boardgame-main/target/*.jar
           retention-days: 7
 
-      - name: Upload compiled classes (for Sonar)
+      # Sends compiled classes AND the coverage report to the sonar job
+      - name: Upload compiled classes + coverage (for Sonar)
         uses: actions/upload-artifact@v4
         with:
           name: compiled-classes
-          path: Boardgame-main/target/classes
+          path: |
+            Boardgame-main/target/classes
+            Boardgame-main/target/site/jacoco
           retention-days: 1
 
   sonarqube:
@@ -57,24 +62,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download compiled classes
+      # Restores target/classes and target/site/jacoco
+      - name: Download compiled classes + coverage
         uses: actions/download-artifact@v4
         with:
           name: compiled-classes
-          path: Boardgame-main/target/classes
+          path: Boardgame-main/target
 
-      # TEMPORARY: remove once Sonar auth works
-      - name: Debug Sonar auth
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        run: |
-          if [ -z "$SONAR_TOKEN" ]; then echo "SONAR_TOKEN is EMPTY"; exit 1; fi
-          if [ -z "$SONAR_HOST_URL" ]; then echo "SONAR_HOST_URL is EMPTY"; exit 1; fi
-          echo "--- token check ---"
-          curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/authentication/validate"; echo
-          echo "--- project check ---"
-          curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/components/show?component=Boardgame"; echo
+      - name: Check coverage report is present
+        run: ls -la Boardgame-main/target/site/jacoco/jacoco.xml
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
