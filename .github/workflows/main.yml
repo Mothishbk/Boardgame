@@ -11,7 +11,6 @@ permissions:
 env:
   APP_NAME: Vuln Project
   PROJECT_DIR: Boardgame-main
-  GITLEAKS_VERSION: 8.28.0   # pin to the release you want
 
 jobs:
   build:
@@ -25,12 +24,13 @@ jobs:
       - name: Code Checkout Step
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0          # full history so gitleaks scans all commits
+          fetch-depth: 0
 
+      # ---------- 1) Secret scanning (early, no build needed) ----------
       - name: Install Gitleaks
         run: |
           sudo apt-get update -y
-          sudo apt install gitleaks
+          sudo apt-get install -y gitleaks
 
       - name: Code Security check (Gitleaks)
         working-directory: .      # repo root, where .git lives
@@ -38,32 +38,32 @@ jobs:
           gitleaks detect --no-git --source . \
             --report-format csv \
             --report-path Boardgame-main/gitleaks-report.csv \
-            --redact \
-            --exit-code 0
+            --redact
 
       - name: Install Trivy
         run: |
-          sudo apt-get update  -y 
           sudo apt-get install -y wget gnupg
           wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
           echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
           sudo apt-get update -y
           sudo apt-get install -y trivy
 
+      # --offline-scan: don't contact Maven Central (avoids 429 errors)
       - name: Trivy secret scan
-        run: trivy fs --scanners secret --exit-code 0 --skip-files README.md --format json --output trivy-secret-report.json .
+        run: trivy fs --scanners secret --offline-scan --exit-code 0 --skip-files README.md --format json --output trivy-secret-report.json .
 
-      - name: Upload security reports
+      - name: Upload secret scan reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: security-reports
+          name: security-reports-secrets
           path: |
             Boardgame-main/gitleaks-report.csv
-            Boardgame-main/trivy-report.json
+            Boardgame-main/trivy-secret-report.json
           if-no-files-found: warn
           retention-days: 7
 
+      # ---------- 2) Test and build ----------
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
@@ -79,18 +79,28 @@ jobs:
 
       - name: Build
         run: mvn -B package -DskipTests
-        
-      - name: Trivy vulnerability scan
-        run: trivy fs --scanners vuln --exit-code 0 --format json --output trivy-vuln-report.json .
-        
+
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
           name: monitoring-jar
           path: Boardgame-main/target/*.jar
           retention-days: 7
-          
-      # Runs AFTER Build so it can scan the jar, which contains all dependency jars
+
+      # ---------- 3) Dependency vulnerability scanning (after build) ----------
+      # ~/.m2 is now filled by Maven, so Trivy finds libraries locally
+      - name: Trivy vulnerability scan
+        run: trivy fs --scanners vuln --format json --output trivy-vuln-report.json .
+
+      - name: Upload vulnerability scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-vuln
+          path: Boardgame-main/trivy-vuln-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: OWASP Dependency-Check Scan
         uses: dependency-check/Dependency-Check_Action@main
         env:
@@ -98,33 +108,23 @@ jobs:
         with:
           project: 'Boardgame'
           path: 'Boardgame-main'       # uses: steps start at repo root, so give the folder
-          format: 'HTML'               # human-readable report
+          format: 'HTML'
           out: 'Boardgame-main/reports'
           args: >
             --format JSON
             --exclude "**/reports/**"
             --nvdApiKey ${{ secrets.NVD_API_KEY }}
- 
+
       - name: Upload Dependency-Check report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
           path: Boardgame-main/reports
-          retention-days: 7
-
-      - name: Upload security reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-reports
-          path: |
-            Boardgame-main/gitleaks-report.csv
-            Boardgame-main/trivy-vuln-report.json
           if-no-files-found: warn
           retention-days: 7
-          
-      # Sends compiled classes AND the coverage report to the sonar job
+
+      # ---------- 4) Hand-over to the Sonar job ----------
       - name: Upload compiled classes + coverage (for Sonar)
         uses: actions/upload-artifact@v4
         with:
