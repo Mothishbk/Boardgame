@@ -1,26 +1,70 @@
-name: Java-project
+name: Java-project-Vulnerable
 
 on:
   push:
     branches:
       - main
 
+permissions:
+  contents: read
+
 env:
-  APP_NAME: java-demo
+  APP_NAME: Vuln Project
   PROJECT_DIR: Boardgame-main
+  GITLEAKS_VERSION: 8.28.0   # pin to the release you want
 
 jobs:
   build:
-    name: Build Process
+    name: Initiate the App deployment
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: Boardgame-main
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Code Checkout Step
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0          # full history so gitleaks scans all commits
 
-      - uses: actions/setup-java@v5
+      - name: Install Gitleaks
+        run: |
+          sudo apt-get update -y
+          sudo apt install gitleaks
+
+      - name: Code Security check (Gitleaks)
+        working-directory: .      # repo root, where .git lives
+        run: |
+          gitleaks detect --no-git --source . \
+            --report-format csv \
+            --report-path Boardgame-main/gitleaks-report.csv \
+            --redact
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update  -y 
+          sudo apt-get install -y wget gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -y
+          sudo apt-get install -y trivy
+
+      - name: Scan for Trivy secrets
+        run: trivy fs --scanners secret,vuln --skip-files README.md --format json --output trivy-report.json .
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            Boardgame-main/gitleaks-report.csv
+            Boardgame-main/trivy-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -29,7 +73,7 @@ jobs:
 
       # Runs tests and creates the JaCoCo coverage report
       # (needs <phase>test</phase> on the jacoco report goal in pom.xml)
-      - name: Test
+      - name: Perform Unit Test
         run: mvn -B test
 
       - name: Build
@@ -41,7 +85,29 @@ jobs:
           name: monitoring-jar
           path: Boardgame-main/target/*.jar
           retention-days: 7
-
+          
+      # Runs AFTER Build so it can scan the jar, which contains all dependency jars
+      - name: OWASP Dependency-Check Scan
+        uses: dependency-check/Dependency-Check_Action@main
+        env:
+          JAVA_HOME: /opt/jdk          # stops setup-java's JAVA_HOME breaking the action's container
+        with:
+          project: 'Boardgame'
+          path: 'Boardgame-main'       # uses: steps start at repo root, so give the folder
+          format: 'HTML'               # human-readable report
+          out: 'Boardgame-main/reports'
+          args: >
+            --format JSON
+            --exclude "**/reports/**"
+            --nvdApiKey ${{ secrets.NVD_API_KEY }}
+ 
+      - name: Upload Dependency-Check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: Boardgame-main/reports
+          retention-days: 7
       # Sends compiled classes AND the coverage report to the sonar job
       - name: Upload compiled classes + coverage (for Sonar)
         uses: actions/upload-artifact@v4
@@ -76,6 +142,9 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v6
         with:
           projectBaseDir: Boardgame-main
+          args: >
+            -Dsonar.java.binaries=target/classes
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
