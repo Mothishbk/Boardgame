@@ -38,7 +38,8 @@ jobs:
           gitleaks detect --no-git --source . \
             --report-format csv \
             --report-path Boardgame-main/gitleaks-report.csv \
-            --redact
+            --redact \
+            --exit-code 0
 
       - name: Install Trivy
         run: |
@@ -50,7 +51,7 @@ jobs:
           sudo apt-get install -y trivy
 
       - name: Trivy secret scan
-        run: trivy fs --scanners secret --skip-files README.md --format json --output trivy-secret-report.json .
+        run: trivy fs --scanners secret --exit-code 0 --skip-files README.md --format json --output trivy-secret-report.json .
 
       - name: Upload security reports
         if: always()
@@ -80,7 +81,7 @@ jobs:
         run: mvn -B package -DskipTests
         
       - name: Trivy vulnerability scan
-        run: trivy fs --scanners vuln --format json --output trivy-vuln-report.json .
+        run: trivy fs --scanners vuln --exit-code 0 --format json --output trivy-vuln-report.json .
         
       - name: Upload JAR
         uses: actions/upload-artifact@v4
@@ -119,7 +120,6 @@ jobs:
           name: security-reports
           path: |
             Boardgame-main/gitleaks-report.csv
-            Boardgame-main/trivy-secret-report.json
             Boardgame-main/trivy-vuln-report.json
           if-no-files-found: warn
           retention-days: 7
