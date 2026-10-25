@@ -49,8 +49,8 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y trivy
 
-      - name: Scan for Trivy secrets
-        run: trivy fs --scanners secret,vuln --skip-files README.md --format json --output trivy-report.json .
+      - name: Trivy secret scan
+        run: trivy fs --scanners secret --skip-files README.md --format json --output trivy-secret-report.json .
 
       - name: Upload security reports
         if: always()
@@ -78,7 +78,10 @@ jobs:
 
       - name: Build
         run: mvn -B package -DskipTests
-
+        
+      - name: Trivy vulnerability scan
+        run: trivy fs --scanners vuln --format json --output trivy-vuln-report.json .
+        
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
@@ -108,6 +111,19 @@ jobs:
           name: dependency-check-report
           path: Boardgame-main/reports
           retention-days: 7
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            Boardgame-main/gitleaks-report.csv
+            Boardgame-main/trivy-secret-report.json
+            Boardgame-main/trivy-vuln-report.json
+          if-no-files-found: warn
+          retention-days: 7
+          
       # Sends compiled classes AND the coverage report to the sonar job
       - name: Upload compiled classes + coverage (for Sonar)
         uses: actions/upload-artifact@v4
