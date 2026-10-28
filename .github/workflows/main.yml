@@ -165,6 +165,7 @@ jobs:
             --format JSON \
             --format SARIF \
             --out reports \
+            --noupdate \
             --data "$HOME/.cache/dependency-check" \
             --exclude "**/reports/**" \
             --nvdApiKey ${{ secrets.NVD_API_KEY }}
