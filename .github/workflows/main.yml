@@ -144,9 +144,20 @@ jobs:
           unzip -q "dependency-check-${DC_VERSION}-release.zip" -d /opt
           sudo ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
 
+      # Cache the NVD database so DC only does a fast incremental update
+      # (the first run still downloads the full DB; later runs are quick)
+      - name: Cache Dependency-Check NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/dependency-check
+          key: dependency-check-data-${{ github.run_id }}
+          restore-keys: |
+            dependency-check-data-
+
       - name: OWASP Dependency-Check Scan
         run: |
-          mkdir -p reports          # DC does not create the --out folder itself
+          mkdir -p reports                          # DC does not create the --out folder
+          mkdir -p "$HOME/.cache/dependency-check"  # the cached NVD data folder
           dependency-check \
             --project "Boardgame" \
             --scan . \
@@ -154,6 +165,7 @@ jobs:
             --format JSON \
             --format SARIF \
             --out reports \
+            --data "$HOME/.cache/dependency-check" \
             --exclude "**/reports/**" \
             --nvdApiKey ${{ secrets.NVD_API_KEY }}
 
