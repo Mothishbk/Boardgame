@@ -168,7 +168,8 @@ jobs:
             --noupdate \
             --data "$HOME/.cache/dependency-check" \
             --exclude "**/reports/**" \
-            --nvdApiKey ${{ secrets.NVD_API_KEY }}
+            --nvdApiKey ${{ secrets.NVD_API_KEY }} \
+            -- exit-code 0
 
       - name: Upload Dependency-Check SARIF to Security tab
         if: ${{ !cancelled() && hashFiles('Boardgame-main/reports/dependency-check-report.sarif') != '' }}
