@@ -17,7 +17,7 @@ env:
   APP_NAME: Vuln Project
   PROJECT_DIR: Boardgame-main
   GITLEAKS_VERSION: "8.21.2"     # pinned
-  TRIVY_VERSION: "0.58.1"        # pinned
+  TRIVY_VERSION: "0.58.2"        # pinned (0.58.1 was never released)
   DC_VERSION: "10.0.4"           # pinned (OWASP Dependency-Check)
 
 jobs:
