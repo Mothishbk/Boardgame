@@ -1,3 +1,7 @@
+# Pinned CLI tool versions live here — bump in ONE place.
+# Every scanner produces BOTH:
+#   * a SARIF file -> uploaded to GitHub Security (Code scanning), unique category
+#   * its native report (JSON/HTML/CSV/SARIF) -> uploaded as a downloadable artifact
 name: Java-project-Vulnerable
 
 on:
@@ -7,10 +11,14 @@ on:
 
 permissions:
   contents: read
+  security-events: write  # required to upload SARIF to the Security tab
 
 env:
   APP_NAME: Vuln Project
   PROJECT_DIR: Boardgame-main
+  GITLEAKS_VERSION: "8.21.2"     # pinned
+  TRIVY_VERSION: "0.58.1"        # pinned
+  DC_VERSION: "10.0.4"           # pinned (OWASP Dependency-Check)
 
 jobs:
   build:
@@ -27,39 +35,64 @@ jobs:
           fetch-depth: 0
 
       # ---------- 1) Secret scanning (early, no build needed) ----------
-      - name: Install Gitleaks
+      - name: Install Gitleaks (pinned + checksum)
+        working-directory: .
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y gitleaks
+          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+          sudo mv gitleaks /usr/local/bin/
 
+      # Gitleaks: one run makes CSV (readable) + SARIF (Security tab)
       - name: Code Security check (Gitleaks)
-        working-directory: .      # repo root, where .git lives
+        working-directory: .
         run: |
-          gitleaks detect --no-git --source . \
-            --report-format csv \
-            --report-path Boardgame-main/gitleaks-report.csv \
-            --redact
+          gitleaks detect --no-git --source . --redact --exit-code 0 \
+            --report-format csv   --report-path Boardgame-main/gitleaks-report.csv
+          gitleaks detect --no-git --source . --redact --exit-code 0 \
+            --report-format sarif --report-path Boardgame-main/gitleaks.sarif
 
-      - name: Install Trivy
+      - name: Upload Gitleaks SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: Boardgame-main/gitleaks.sarif
+          category: gitleaks
+
+      - name: Install Trivy (pinned + checksum)
+        working-directory: .
         run: |
-          sudo apt-get install -y wget gnupg
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update -y
-          sudo apt-get install -y trivy
+          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
+          sudo mv trivy /usr/local/bin/
 
-      # --offline-scan: don't contact Maven Central (avoids 429 errors)
-      - name: Trivy secret scan
-        run: trivy fs --scanners secret --offline-scan --exit-code 0 --skip-files README.md --format json --output trivy-secret-report.json .
+      # Scan ONCE to JSON, then convert the same result to SARIF (no re-scan)
+      - name: Trivy secret scan (JSON + SARIF)
+        run: |
+          trivy fs --scanners secret --offline-scan --skip-files README.md \
+            --exit-code 0 --format json --output trivy-secret-report.json .
+          trivy convert --format sarif --output trivy-secret.sarif trivy-secret-report.json
 
-      - name: Upload secret scan reports
+      - name: Upload Trivy secret SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: Boardgame-main/trivy-secret.sarif
+          category: trivy-secret
+
+      - name: Upload secret scan reports (artifacts)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-reports-secrets
           path: |
             Boardgame-main/gitleaks-report.csv
+            Boardgame-main/gitleaks.sarif
             Boardgame-main/trivy-secret-report.json
+            Boardgame-main/trivy-secret.sarif
           if-no-files-found: warn
           retention-days: 7
 
@@ -72,8 +105,6 @@ jobs:
           cache: maven
           cache-dependency-path: Boardgame-main/pom.xml
 
-      # Runs tests and creates the JaCoCo coverage report
-      # (needs <phase>test</phase> on the jacoco report goal in pom.xml)
       - name: Perform Unit Test
         run: mvn -B test
 
@@ -89,33 +120,61 @@ jobs:
 
       # ---------- 3) Dependency vulnerability scanning (after build) ----------
       # ~/.m2 is now filled by Maven, so Trivy finds libraries locally
-      - name: Trivy vulnerability scan
-        run: trivy fs --scanners vuln --format json --output trivy-vuln-report.json .
+      - name: Trivy vulnerability scan (JSON + SARIF)
+        run: |
+          trivy fs --scanners vuln --exit-code 0 \
+            --format json --output trivy-vuln-report.json .
+          trivy convert --format sarif --output trivy-vuln.sarif trivy-vuln-report.json
 
-      - name: Upload vulnerability scan report
+      - name: Upload Trivy vuln SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: Boardgame-main/trivy-vuln.sarif
+          category: trivy-vuln
+
+      - name: Upload vulnerability scan reports (artifacts)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-reports-vuln
-          path: Boardgame-main/trivy-vuln-report.json
+          path: |
+            Boardgame-main/trivy-vuln-report.json
+            Boardgame-main/trivy-vuln.sarif
           if-no-files-found: warn
           retention-days: 7
 
+      # OWASP Dependency-Check (pinned CLI) — one run -> HTML + JSON + SARIF
+      - name: Install OWASP Dependency-Check (pinned + checksum)
+        working-directory: .
+        run: |
+          BASE="https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}"
+          wget -q "$BASE/dependency-check-${DC_VERSION}-release.zip"
+          wget -q "$BASE/dependency-check-${DC_VERSION}-release.zip.sha256"
+          echo "$(cat dependency-check-${DC_VERSION}-release.zip.sha256)  dependency-check-${DC_VERSION}-release.zip" | sha256sum -c -
+          unzip -q "dependency-check-${DC_VERSION}-release.zip" -d /opt
+          sudo ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
+
       - name: OWASP Dependency-Check Scan
-        uses: dependency-check/Dependency-Check_Action@main
-        env:
-          JAVA_HOME: /opt/jdk          # stops setup-java's JAVA_HOME breaking the action's container
-        with:
-          project: 'Boardgame'
-          path: 'Boardgame-main'       # uses: steps start at repo root, so give the folder
-          format: 'HTML'
-          out: 'Boardgame-main/reports'
-          args: >
-            --format JSON
-            --exclude "**/reports/**"
+        run: |
+          dependency-check \
+            --project "Boardgame" \
+            --scan . \
+            --format HTML \
+            --format JSON \
+            --format SARIF \
+            --out reports \
+            --exclude "**/reports/**" \
             --nvdApiKey ${{ secrets.NVD_API_KEY }}
 
-      - name: Upload Dependency-Check report
+      - name: Upload Dependency-Check SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: Boardgame-main/reports/dependency-check-report.sarif
+          category: dependency-check
+
+      - name: Upload Dependency-Check reports (artifacts)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -144,7 +203,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Restores target/classes and target/site/jacoco
       - name: Download compiled classes + coverage
         uses: actions/download-artifact@v4
         with:
@@ -178,3 +236,59 @@ jobs:
       - name: Show Quality Gate status
         if: always()
         run: echo "Quality Gate status is ${{ steps.qg.outputs.quality-gate-status }}"
+
+  docker:
+    name: Docker Build, Scan & Push
+    runs-on: ubuntu-latest
+    needs: [build, sonarqube]        # only after tests, scans and Quality Gate pass
+    defaults:
+      run:
+        working-directory: Boardgame-main
+    env:
+      IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/vuln-java-app:${{ github.sha }}
+
+    steps:
+      - name: Code Checkout Step       # multi-stage Dockerfile builds from source
+        uses: actions/checkout@v5
+
+      - name: Install Trivy (pinned + checksum)
+        working-directory: .
+        run: |
+          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
+          sudo mv trivy /usr/local/bin/
+
+      - name: Docker Build
+        run: docker build -t "$IMAGE" .
+
+      # Scan ONCE to JSON, convert to SARIF (both kept)
+      - name: Trivy image scan (JSON + SARIF)
+        run: |
+          trivy image "$IMAGE" --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 0 --format json --output trivy-image-report.json
+          trivy convert --format sarif --output trivy-image.sarif trivy-image-report.json
+
+      - name: Upload Trivy image SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: Boardgame-main/trivy-image.sarif
+          category: trivy-image
+
+      - name: Upload image scan reports (artifacts)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports-image
+          path: |
+            Boardgame-main/trivy-image-report.json
+            Boardgame-main/trivy-image.sarif
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Login & Push to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          docker push "$IMAGE"
