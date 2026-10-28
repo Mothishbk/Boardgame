@@ -38,11 +38,14 @@ jobs:
       - name: Install Gitleaks (pinned + checksum)
         working-directory: .
         run: |
-          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          wget -q "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
-          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-          sudo mv gitleaks /usr/local/bin/
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -fsSL --retry 3 -o "$f" "$url/$f"
+          curl -fsSL --retry 3 -o gitleaks_checksums.txt "$url/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $f\$" gitleaks_checksums.txt | sha256sum -c -
+          mkdir -p gitleaksbin && tar -xzf "$f" -C gitleaksbin
+          sudo mv gitleaksbin/gitleaks /usr/local/bin/
+          gitleaks version
 
       # Gitleaks: one run makes CSV (readable) + SARIF (Security tab)
       - name: Code Security check (Gitleaks)
@@ -54,7 +57,7 @@ jobs:
             --report-format sarif --report-path Boardgame-main/gitleaks.sarif
 
       - name: Upload Gitleaks SARIF to Security tab
-        if: always()
+        if: ${{ !cancelled() && hashFiles('Boardgame-main/gitleaks.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: Boardgame-main/gitleaks.sarif
@@ -63,11 +66,14 @@ jobs:
       - name: Install Trivy (pinned + checksum)
         working-directory: .
         run: |
-          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
-          grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
-          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
-          sudo mv trivy /usr/local/bin/
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          url="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSL --retry 3 -o "$f" "$url/$f"
+          curl -fsSL --retry 3 -o trivy_checksums.txt "$url/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " $f\$" trivy_checksums.txt | sha256sum -c -
+          mkdir -p trivybin && tar -xzf "$f" -C trivybin
+          sudo mv trivybin/trivy /usr/local/bin/
+          trivy --version
 
       # Scan ONCE to JSON, then convert the same result to SARIF (no re-scan)
       - name: Trivy secret scan (JSON + SARIF)
@@ -77,7 +83,7 @@ jobs:
           trivy convert --format sarif --output trivy-secret.sarif trivy-secret-report.json
 
       - name: Upload Trivy secret SARIF to Security tab
-        if: always()
+        if: ${{ !cancelled() && hashFiles('Boardgame-main/trivy-secret.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: Boardgame-main/trivy-secret.sarif
@@ -127,7 +133,7 @@ jobs:
           trivy convert --format sarif --output trivy-vuln.sarif trivy-vuln-report.json
 
       - name: Upload Trivy vuln SARIF to Security tab
-        if: always()
+        if: ${{ !cancelled() && hashFiles('Boardgame-main/trivy-vuln.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: Boardgame-main/trivy-vuln.sarif
@@ -148,11 +154,11 @@ jobs:
       - name: Install OWASP Dependency-Check (pinned + checksum)
         working-directory: .
         run: |
-          BASE="https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}"
-          wget -q "$BASE/dependency-check-${DC_VERSION}-release.zip"
-          wget -q "$BASE/dependency-check-${DC_VERSION}-release.zip.sha256"
-          echo "$(cat dependency-check-${DC_VERSION}-release.zip.sha256)  dependency-check-${DC_VERSION}-release.zip" | sha256sum -c -
-          unzip -q "dependency-check-${DC_VERSION}-release.zip" -d /opt
+          base="https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}"
+          curl -fsSL --retry 3 -o dependency-check.zip "$base/dependency-check-${DC_VERSION}-release.zip"
+          curl -fsSL --retry 3 -o dependency-check.zip.sha256 "$base/dependency-check-${DC_VERSION}-release.zip.sha256"
+          echo "$(cat dependency-check.zip.sha256)  dependency-check.zip" | sha256sum -c -
+          unzip -q dependency-check.zip -d /opt
           sudo ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
 
       - name: OWASP Dependency-Check Scan
@@ -168,7 +174,7 @@ jobs:
             --nvdApiKey ${{ secrets.NVD_API_KEY }}
 
       - name: Upload Dependency-Check SARIF to Security tab
-        if: always()
+        if: ${{ !cancelled() && hashFiles('Boardgame-main/reports/dependency-check-report.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: Boardgame-main/reports/dependency-check-report.sarif
@@ -254,11 +260,14 @@ jobs:
       - name: Install Trivy (pinned + checksum)
         working-directory: .
         run: |
-          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          wget -q "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
-          grep "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
-          tar -xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy
-          sudo mv trivy /usr/local/bin/
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          url="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSL --retry 3 -o "$f" "$url/$f"
+          curl -fsSL --retry 3 -o trivy_checksums.txt "$url/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " $f\$" trivy_checksums.txt | sha256sum -c -
+          mkdir -p trivybin && tar -xzf "$f" -C trivybin
+          sudo mv trivybin/trivy /usr/local/bin/
+          trivy --version
 
       - name: Docker Build
         run: docker build -t "$IMAGE" .
@@ -271,7 +280,7 @@ jobs:
           trivy convert --format sarif --output trivy-image.sarif trivy-image-report.json
 
       - name: Upload Trivy image SARIF to Security tab
-        if: always()
+        if: ${{ !cancelled() && hashFiles('Boardgame-main/trivy-image.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: Boardgame-main/trivy-image.sarif
