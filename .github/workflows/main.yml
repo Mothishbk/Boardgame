@@ -1,7 +1,5 @@
-# Pinned CLI tool versions live here — bump in ONE place.
-# Every scanner produces BOTH:
-#   * a SARIF file -> uploaded to GitHub Security (Code scanning), unique category
-#   * its native report (JSON/HTML/CSV/SARIF) -> uploaded as a downloadable artifact
+# Simple direct installs (apt where possible). No pinned versions / checksums.
+# Every scanner produces BOTH a SARIF (-> GitHub Security) and a downloadable artifact.
 name: Java-project-Vulnerable
 
 on:
@@ -16,9 +14,7 @@ permissions:
 env:
   APP_NAME: Vuln Project
   PROJECT_DIR: Boardgame-main
-  GITLEAKS_VERSION: "8.21.2"     # pinned
-  TRIVY_VERSION: "0.58.2"        # pinned (0.58.1 was never released)
-  DC_VERSION: "10.0.4"           # pinned (OWASP Dependency-Check)
+  DC_VERSION: "10.0.4"    # Dependency-Check has no apt package -> versioned download needed
 
 jobs:
   build:
@@ -35,19 +31,12 @@ jobs:
           fetch-depth: 0
 
       # ---------- 1) Secret scanning (early, no build needed) ----------
-      - name: Install Gitleaks (pinned + checksum)
-        working-directory: .
+      - name: Install Gitleaks
         run: |
-          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-          curl -fsSL --retry 3 -o "$f" "$url/$f"
-          curl -fsSL --retry 3 -o gitleaks_checksums.txt "$url/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          grep " $f\$" gitleaks_checksums.txt | sha256sum -c -
-          mkdir -p gitleaksbin && tar -xzf "$f" -C gitleaksbin
-          sudo mv gitleaksbin/gitleaks /usr/local/bin/
-          gitleaks version
+          sudo apt-get update -y
+          sudo apt-get install -y gitleaks
 
-      # Gitleaks: one run makes CSV (readable) + SARIF (Security tab)
+      # Gitleaks: one tool, two reports — CSV (readable) + SARIF (Security tab)
       - name: Code Security check (Gitleaks)
         working-directory: .
         run: |
@@ -63,17 +52,13 @@ jobs:
           sarif_file: Boardgame-main/gitleaks.sarif
           category: gitleaks
 
-      - name: Install Trivy (pinned + checksum)
-        working-directory: .
+      - name: Install Trivy
         run: |
-          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          url="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
-          curl -fsSL --retry 3 -o "$f" "$url/$f"
-          curl -fsSL --retry 3 -o trivy_checksums.txt "$url/trivy_${TRIVY_VERSION}_checksums.txt"
-          grep " $f\$" trivy_checksums.txt | sha256sum -c -
-          mkdir -p trivybin && tar -xzf "$f" -C trivybin
-          sudo mv trivybin/trivy /usr/local/bin/
-          trivy --version
+          sudo apt-get install -y wget gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -y
+          sudo apt-get install -y trivy
 
       # Scan ONCE to JSON, then convert the same result to SARIF (no re-scan)
       - name: Trivy secret scan (JSON + SARIF)
@@ -150,15 +135,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      # OWASP Dependency-Check (pinned CLI) — one run -> HTML + JSON + SARIF
-      - name: Install OWASP Dependency-Check (pinned + checksum)
+      # OWASP Dependency-Check — no apt package, so a plain download (no checksum).
+      # One run -> HTML + JSON + SARIF
+      - name: Install OWASP Dependency-Check
         working-directory: .
         run: |
-          base="https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}"
-          curl -fsSL --retry 3 -o dependency-check.zip "$base/dependency-check-${DC_VERSION}-release.zip"
-          curl -fsSL --retry 3 -o dependency-check.zip.sha256 "$base/dependency-check-${DC_VERSION}-release.zip.sha256"
-          echo "$(cat dependency-check.zip.sha256)  dependency-check.zip" | sha256sum -c -
-          unzip -q dependency-check.zip -d /opt
+          wget -q "https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip"
+          unzip -q "dependency-check-${DC_VERSION}-release.zip" -d /opt
           sudo ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
 
       - name: OWASP Dependency-Check Scan
@@ -257,17 +240,13 @@ jobs:
       - name: Code Checkout Step       # multi-stage Dockerfile builds from source
         uses: actions/checkout@v5
 
-      - name: Install Trivy (pinned + checksum)
-        working-directory: .
+      - name: Install Trivy
         run: |
-          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          url="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
-          curl -fsSL --retry 3 -o "$f" "$url/$f"
-          curl -fsSL --retry 3 -o trivy_checksums.txt "$url/trivy_${TRIVY_VERSION}_checksums.txt"
-          grep " $f\$" trivy_checksums.txt | sha256sum -c -
-          mkdir -p trivybin && tar -xzf "$f" -C trivybin
-          sudo mv trivybin/trivy /usr/local/bin/
-          trivy --version
+          sudo apt-get install -y wget gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -y
+          sudo apt-get install -y trivy
 
       - name: Docker Build
         run: docker build -t "$IMAGE" .
