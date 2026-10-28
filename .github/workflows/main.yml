@@ -14,7 +14,6 @@ permissions:
 env:
   APP_NAME: Vuln Project
   PROJECT_DIR: Boardgame-main
-  DC_VERSION: "10.0.4"    # Dependency-Check has no apt package -> versioned download needed
 
 jobs:
   build:
@@ -132,58 +131,6 @@ jobs:
           path: |
             Boardgame-main/trivy-vuln-report.json
             Boardgame-main/trivy-vuln.sarif
-          if-no-files-found: warn
-          retention-days: 7
-
-      # OWASP Dependency-Check — no apt package, so a plain download (no checksum).
-      # One run -> HTML + JSON + SARIF
-      - name: Install OWASP Dependency-Check
-        working-directory: .
-        run: |
-          wget -q "https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip"
-          unzip -q "dependency-check-${DC_VERSION}-release.zip" -d /opt
-          sudo ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
-
-      # Cache the NVD database so DC only does a fast incremental update
-      # (the first run still downloads the full DB; later runs are quick)
-      - name: Cache Dependency-Check NVD data
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/dependency-check
-          key: dependency-check-data-${{ github.run_id }}
-          restore-keys: |
-            dependency-check-data-
-
-      - name: OWASP Dependency-Check Scan
-        run: |
-          mkdir -p reports                          # DC does not create the --out folder
-          mkdir -p "$HOME/.cache/dependency-check"  # the cached NVD data folder
-          dependency-check \
-            --project "Boardgame" \
-            --scan . \
-            --format HTML \
-            --format JSON \
-            --format SARIF \
-            --out reports \
-            --noupdate \
-            --data "$HOME/.cache/dependency-check" \
-            --exclude "**/reports/**" \
-            --nvdApiKey ${{ secrets.NVD_API_KEY }} \
-            -- exit-code 0
-
-      - name: Upload Dependency-Check SARIF to Security tab
-        if: ${{ !cancelled() && hashFiles('Boardgame-main/reports/dependency-check-report.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: Boardgame-main/reports/dependency-check-report.sarif
-          category: dependency-check
-
-      - name: Upload Dependency-Check reports (artifacts)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-check-report
-          path: Boardgame-main/reports
           if-no-files-found: warn
           retention-days: 7
 
