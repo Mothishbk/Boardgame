@@ -146,6 +146,7 @@ jobs:
 
       - name: OWASP Dependency-Check Scan
         run: |
+          mkdir -p reports          # DC does not create the --out folder itself
           dependency-check \
             --project "Boardgame" \
             --scan . \
